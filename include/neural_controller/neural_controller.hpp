@@ -53,10 +53,12 @@ class NeuralController : public controller_interface::ControllerInterface {
   /* ----------------- Layer sizes ----------------- */
   static constexpr int OBSERVATION_HISTORY = 2;
   static constexpr int ACTION_SIZE = 12;
-  static constexpr int SINGLE_OBSERVATION_SIZE = 3              /* base link angular velocity */
-                                                 + 3            /* projected gravity vector */
-                                                 + 3            /* x, y, yaw velocity commands */
-                                                 + ACTION_SIZE  /* joint positions */
+  static constexpr int SENSOR_OBSERVATION_SIZE = 3 +     /* base link angular velocity */
+                                                 3 +     /* projected gravity vector */
+                                                 3;      /* x, y, yaw velocity commands */
+  static constexpr int OBSERVATION_GRAVITY_Z_INDEX = 5;  // Index of gravity z coordinate
+  static constexpr int SINGLE_OBSERVATION_SIZE = SENSOR_OBSERVATION_SIZE +
+                                                 ACTION_SIZE    /* joint positions */
                                                  + ACTION_SIZE; /* previous action */
   static constexpr int OBSERVATION_SIZE = OBSERVATION_HISTORY * SINGLE_OBSERVATION_SIZE;
   /* ----------------------------------------------- */
@@ -66,8 +68,9 @@ class NeuralController : public controller_interface::ControllerInterface {
   std::shared_ptr<ParamListener> param_listener_;
   Params params_;
 
-  float observation_[OBSERVATION_SIZE] = {0};
-  float action_[ACTION_SIZE] = {0};
+  // Value-initialize to 0.0
+  std::array<float, OBSERVATION_SIZE> observation_{};
+  std::array<float, ACTION_SIZE> action_{};
 
   float cmd_x_vel_ = 0;
   float cmd_y_vel_ = 0;
@@ -91,7 +94,7 @@ class NeuralController : public controller_interface::ControllerInterface {
 
   int repeat_action_counter_;
 
-  double init_joint_pos_[ACTION_SIZE] = {0};
+  std::array<double, ACTION_SIZE> init_joint_pos_{};
 
   bool estop_active_ = false;
 };

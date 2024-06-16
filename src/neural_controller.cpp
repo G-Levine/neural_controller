@@ -68,8 +68,8 @@ controller_interface::CallbackReturn NeuralController::on_activate(
 
   // Store the initial joint positions
   for (int i = 0; i < ACTION_SIZE; i++) {
-    init_joint_pos_[i] =
-        state_interfaces_map_.at(params_.joint_names[i]).at("position").get().get_value();
+    init_joint_pos_.at(i) =
+        state_interfaces_map_.at(params_.joint_names.at(i)).at("position").get().get_value();
   }
 
   init_time_ = get_node()->now();
@@ -81,7 +81,7 @@ controller_interface::CallbackReturn NeuralController::on_activate(
 
   // Set the gravity z-component in the initial observation vector
   for (int i = 0; i < OBSERVATION_HISTORY; i++) {
-    observation_[i * SINGLE_OBSERVATION_SIZE + 5] = -1.0;
+    observation_.at(i * SINGLE_OBSERVATION_SIZE + OBSERVATION_GRAVITY_Z_INDEX) = -1.0;
   }
 
   // Initialize the command subscriber
@@ -112,20 +112,20 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
       // Interpolate between the initial joint positions and the default joint
       // positions
       double interpolated_joint_pos =
-          init_joint_pos_[i] * (1 - time_since_init / params_.init_duration) +
-          params_.default_joint_pos[i] * (time_since_init / params_.init_duration);
-      command_interfaces_map_.at(params_.joint_names[i])
+          init_joint_pos_.at(i) * (1 - time_since_init / params_.init_duration) +
+          params_.default_joint_pos.at(i) * (time_since_init / params_.init_duration);
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("position")
           .get()
           .set_value(interpolated_joint_pos);
-      command_interfaces_map_.at(params_.joint_names[i])
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("kp")
           .get()
-          .set_value(params_.init_kps[i]);
-      command_interfaces_map_.at(params_.joint_names[i])
+          .set_value(params_.init_kps.at(i));
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("kd")
           .get()
-          .set_value(params_.init_kds[i]);
+          .set_value(params_.init_kds.at(i));
     }
     return controller_interface::return_type::OK;
   }
@@ -198,25 +198,25 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
 
     // Fill the observation vector
     // Angular velocity
-    observation_[0] = (float)ang_vel_x * params_.ang_vel_scale;
-    observation_[1] = (float)ang_vel_y * params_.ang_vel_scale;
-    observation_[2] = (float)ang_vel_z * params_.ang_vel_scale;
+    observation_.at(0) = ang_vel_x * params_.ang_vel_scale;
+    observation_.at(1) = ang_vel_y * params_.ang_vel_scale;
+    observation_.at(2) = ang_vel_z * params_.ang_vel_scale;
     // Projected gravity vector
-    observation_[3] = (float)projected_gravity_vector[0];
-    observation_[4] = (float)projected_gravity_vector[1];
-    observation_[5] = (float)projected_gravity_vector[2];
+    observation_.at(3) = projected_gravity_vector[0];
+    observation_.at(4) = projected_gravity_vector[1];
+    observation_.at(5) = projected_gravity_vector[2];
     // Commands
-    observation_[6] = (float)cmd_x_vel_ * params_.lin_vel_scale;
-    observation_[7] = (float)cmd_y_vel_ * params_.lin_vel_scale;
-    observation_[8] = (float)cmd_yaw_vel_ * params_.ang_vel_scale;
+    observation_.at(6) = cmd_x_vel_ * params_.lin_vel_scale;
+    observation_.at(7) = cmd_y_vel_ * params_.lin_vel_scale;
+    observation_.at(8) = cmd_yaw_vel_ * params_.ang_vel_scale;
     // Joint positions
     for (int i = 0; i < ACTION_SIZE; i++) {
       // Only include the joint position in the observation if the action type
       // is position
-      if (params_.action_types[i] == "position") {
-        observation_[9 + i] =
-            (state_interfaces_map_.at(params_.joint_names[i]).at("position").get().get_value() -
-             params_.default_joint_pos[i]) *
+      if (params_.action_types.at(i) == "position") {
+        observation_.at(SENSOR_OBSERVATION_SIZE + i) =
+            (state_interfaces_map_.at(params_.joint_names.at(i)).at("position").get().get_value() -
+             params_.default_joint_pos.at(i)) *
             params_.joint_pos_scale;
       }
     }
@@ -227,40 +227,50 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
 
   // Clip the observation vector
   for (int i = 0; i < OBSERVATION_SIZE; i++) {
-    observation_[i] = std::max(std::min(observation_[i], (float)params_.observation_limit),
-                               (float)-params_.observation_limit);
+    observation_.at(i) = std::max(std::min(observation_.at(i), (float)params_.observation_limit),
+                                  (float)-params_.observation_limit);
   }
 
   // Perform policy inference
-  model_->forward(observation_);
+  model_->forward(observation_.data());
 
-  // Shift the observation history by SINGLE_OBSERVATION_SIZE for the next control step
-  for (int i = SINGLE_OBSERVATION_SIZE; i < OBSERVATION_SIZE; i++) {
-    observation_[i] = observation_[i - SINGLE_OBSERVATION_SIZE];
-  }
+  // Shift the observation history to the right by SINGLE_OBSERVATION_SIZE for the next control step
+  // https://en.cppreference.com/w/cpp/algorithm/rotate
+  std::rotate(observation_.rbegin(), observation_.rbegin() + SINGLE_OBSERVATION_SIZE,
+              observation_.rend());
 
   // Process the actions
-  const float *policy_output = model_->getOutputs();
+  std::array<float, ACTION_SIZE> policy_output;
+  const float *policy_output_raw = model_->getOutputs();
+  std::copy(policy_output_raw, policy_output_raw + ACTION_SIZE, policy_output.begin());
+
   for (int i = 0; i < ACTION_SIZE; i++) {
     // Clip the action
-    float action_clipped = std::max(std::min(policy_output[i], (float)params_.action_limit),
-                                    (float)-params_.action_limit);
-    // Copy policy_output to the observation vector
-    observation_[9 + ACTION_SIZE + i] = fade_in_multiplier * action_clipped;
-    // Scale and de-normalize to get the action vector
-    if (params_.action_types[i] == "position") {
-      action_[i] = fade_in_multiplier * action_clipped * params_.action_scales[i] +
-                   params_.default_joint_pos[i];
-    } else {
-      action_[i] = fade_in_multiplier * action_clipped * params_.action_scales[i];
+    float action = fade_in_multiplier * policy_output.at(i) * params_.action_scales.at(i);
+    if (params_.action_types.at(i) == "position") {
+      action = action + params_.default_joint_pos.at(i);
     }
+    float clipped_action = std::max(std::min(action, (float)params_.action_limit_upper.at(i)),
+                                    (float)params_.action_limit_lower.at(i));
+    action_.at(i) = clipped_action;
+
+    // Copy policy_output to the observation vector
+    observation_.at(SENSOR_OBSERVATION_SIZE + ACTION_SIZE + i) =
+        fade_in_multiplier * policy_output.at(i);
+
     // Send the action to the hardware interface
-    command_interfaces_map_.at(params_.joint_names[i])
-        .at(params_.action_types[i])
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at(params_.action_types.at(i))
         .get()
-        .set_value((double)action_[i]);
-    command_interfaces_map_.at(params_.joint_names[i]).at("kp").get().set_value(params_.kps[i]);
-    command_interfaces_map_.at(params_.joint_names[i]).at("kd").get().set_value(params_.kds[i]);
+        .set_value((double)action_.at(i));
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at("kp")
+        .get()
+        .set_value(params_.kps.at(i));
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at("kd")
+        .get()
+        .set_value(params_.kds.at(i));
   }
 
   // Get the policy inference time
