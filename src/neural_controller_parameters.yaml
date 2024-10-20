@@ -1,120 +1,133 @@
 neural_controller:
-  repeat_action: {
-    type: int,
-    default_value: 8,
-    description: 'Number of times to repeat the same action before querying the policy again'
-  }
+  repeat_action:
+    {
+      type: int,
+      default_value: 8,
+      description: "Number of times to repeat the same action before querying the policy again",
+    }
 
-  model_path: {
-    type: string,
-    default_value: '',
-    description: 'Path to the model weights'
-  }
+  model_path:
+    {
+      type: string,
+      default_value: "",
+      description: "Path to the model weights",
+    }
 
-  imu_sensor_name: {
-    type: string,
-    default_value: 'imu_sensor',
-    description: 'Name of the IMU sensor'
-  }
+  use_imu:
+    {
+      type: bool,
+      default_value: true,
+      description: "Whether to use the IMU sensor",
+    }
 
-  joint_names: {
-    type: string_array,
-    default_value: [],
-    description: 'Names of the joints to control, in the order expected by the policy observation/action spaces'
-  }
+  imu_sensor_name:
+    {
+      type: string,
+      default_value: "imu_sensor",
+      description: "Name of the IMU sensor",
+    }
 
-  default_joint_pos: {
-    type: double_array,
-    default_value: [],
-    description: 'Default joint positions to use when the controller is reset'
-  }
+  joint_names:
+    {
+      type: string_array,
+      default_value: [],
+      description: "Names of the joints to control, in the order expected by the policy observation/action spaces",
+    }
 
-  kps: {
-    type: double_array,
-    default_value: [],
-    description: 'Position gains for the joints'
-  }
+  default_joint_pos:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Default joint positions to use when the controller is reset",
+    }
 
-  kds: {
-    type: double_array,
-    default_value: [],
-    description: 'Velocity gains for the joints'
-  }
+  kps:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Position gains for the joints",
+    }
 
-  init_kps: {
-    type: double_array,
-    default_value: [],
-    description: 'Position gains for the joints during initialization (return to default position)'
-  }
+  kds:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Velocity gains for the joints",
+    }
 
-  init_kds: {
-    type: double_array,
-    default_value: [],
-    description: 'Velocity gains for the joints during initialization (return to default position)'
-  }
+  init_kps:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Position gains for the joints during initialization (return to default position)",
+    }
 
-  init_duration: {
-    type: double,
-    default_value: 2.0,
-    description: 'Time to return to the default position on startup'
-  }
+  init_kds:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Velocity gains for the joints during initialization (return to default position)",
+    }
 
-  fade_in_duration: {
-    type: double,
-    default_value: 2.0,
-    description: 'Time to gradually fade in the policy actions on startup'
-  }
+  init_duration:
+    {
+      type: double,
+      default_value: 2.0,
+      description: "Time to return to the default position on startup",
+    }
 
-  lin_vel_scale: {
-    type: double,
-    default_value: 1.0,
-    description: 'Scaling factor for the linear velocity commands'
-  }
+  fade_in_duration:
+    {
+      type: double,
+      default_value: 2.0,
+      description: "Time to gradually fade in the policy actions on startup",
+    }
 
-  ang_vel_scale: {
-    type: double,
-    default_value: 1.0,
-    description: 'Scaling factor for the angular velocity observations/commands'
-  }
+  action_scales:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Scaling factor for the actions",
+    }
 
-  joint_pos_scale: {
-    type: double,
-    default_value: 1.0,
-    description: 'Scaling factor for the joint position observations'
-  }
+  action_types:
+    {
+      type: string_array,
+      default_value: [],
+      description: "Type of action for each joint: position or velocity",
+    }
 
-  joint_vel_scale: {
-    type: double,
-    default_value: 1.0,
-    description: 'Scaling factor for the joint velocity observations'
-  }
+  joint_lower_limits:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Lower limits for the joint positions",
+    }
 
-  action_scales: {
-    type: double_array,
-    default_value: [],
-    description: 'Scaling factor for the actions'
-  }
+  joint_upper_limits:
+    {
+      type: double_array,
+      default_value: [],
+      description: "Upper limits for the joint positions",
+    }
 
-  action_types: {
-    type: string_array,
-    default_value: [],
-    description: 'Type of action for each joint: position or velocity'
-  }
+  observation_history:
+    {
+      type: int,
+      default_value: 1,
+      description: "Number of previous observations to include in the observation space",
+    }
 
-  action_limit: {
-    type: double,
-    default_value: 1.0,
-    description: 'Maximum action value before scaling'
-  }
+  observation_limit:
+    {
+      type: double,
+      default_value: 100.0,
+      description: "Maximum observation value before scaling",
+    }
 
-  observation_limit: {
-    type: double,
-    default_value: 100.0,
-    description: 'Maximum observation value before scaling'
-  }
-
-  max_body_angle: {
-    type: double,
-    default_value: 0.52,
-    description: 'Maximum body angle (rad) allowed before the controller is reset'
-  }
+  max_body_angle:
+    {
+      type: double,
+      default_value: 0.52,
+      description: "Maximum body angle (rad) allowed before the controller is reset",
+    }

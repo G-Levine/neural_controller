@@ -17,13 +17,102 @@ NeuralController::NeuralController()
       rt_command_ptr_(nullptr),
       cmd_subscriber_(nullptr) {}
 
+// Check parameter vectors have the correct size
+bool NeuralController::check_param_vector_size() {
+  const std::vector<std::pair<std::string, size_t>> param_sizes = {
+      {"action_scales", params_.action_scales.size()},
+      {"action_types", params_.action_types.size()},
+      {"kps", params_.kps.size()},
+      {"kds", params_.kds.size()},
+      {"init_kps", params_.init_kps.size()},
+      {"init_kds", params_.init_kds.size()},
+      {"default_joint_pos", params_.default_joint_pos.size()},
+      {"joint_lower_limits", params_.joint_lower_limits.size()},
+      {"joint_upper_limits", params_.joint_upper_limits.size()},
+      {"joint_names", params_.joint_names.size()}};
+
+  for (const auto &[name, size] : param_sizes) {
+    if (size != kActionSize) {
+      RCLCPP_ERROR(get_node()->get_logger(), "%s size is %d, expected %d", name.c_str(), size,
+                   kActionSize);
+      return false;
+    }
+  }
+  return true;
+}
+
 controller_interface::CallbackReturn NeuralController::on_init() {
   try {
     param_listener_ = std::make_shared<ParamListener>(get_node());
     params_ = param_listener_->get_params();
 
+    if (!check_param_vector_size()) {
+      return controller_interface::CallbackReturn::ERROR;
+    }
+
     std::ifstream json_stream(params_.model_path, std::ifstream::binary);
     model_ = RTNeural::json_parser::parseJson<float>(json_stream, true);
+
+    // Read params json file using nholsojson to extract metadata
+    nlohmann::json j;
+    std::ifstream json_file(params_.model_path);
+    json_file >> j;
+
+    auto set_param_from_json_vector = [&](const std::string &key, auto &param) {
+      if (j.find(key) != j.end()) {
+        RCLCPP_INFO(get_node()->get_logger(), "Setting %s from JSON", key.c_str());
+        if (j[key].size() != kActionSize) {
+          std::string error_msg = "Invalid size for " + key + " (" + std::to_string(j[key].size()) +
+                                  ") != " + std::to_string(kActionSize);
+          RCLCPP_ERROR(get_node()->get_logger(), "%s", error_msg.c_str());
+          throw std::runtime_error(error_msg);
+        }
+        for (int i = 0; i < param.size(); i++) {
+          param.at(i) = j[key].at(i);
+        }
+      }
+    };
+
+    auto set_param_from_json_scalar = [&](const std::string &key, auto &param) {
+      if (j.find(key) != j.end()) {
+        RCLCPP_INFO(get_node()->get_logger(), "Setting %s=%f from JSON", key.c_str(),
+                    static_cast<double>(j[key]));
+        for (auto &p : param) {
+          p = j[key];
+        }
+      }
+    };
+
+    set_param_from_json_scalar("action_scale", params_.action_scales);
+    set_param_from_json_scalar("kp", params_.kps);
+    set_param_from_json_scalar("kd", params_.kds);
+    set_param_from_json_vector("default_pose", params_.default_joint_pos);
+    set_param_from_json_vector("joint_lower_limits", params_.joint_lower_limits);
+    set_param_from_json_vector("joint_upper_limits", params_.joint_upper_limits);
+
+    // Warn user that use_imu should be set in the robot description
+    if (j.find("use_imu") != j.end()) {
+      RCLCPP_WARN(get_node()->get_logger(),
+                  "Policy JSON specifies use_imu=%d. Verify robot description has proper value of "
+                  "use_imu",
+                  j["use_imu"]);
+      params_.use_imu = j["use_imu"];
+    }
+
+    if (j.find("observation_history") != j.end()) {
+      RCLCPP_INFO(get_node()->get_logger(), "Setting observation_history from JSON");
+      params_.observation_history = j["observation_history"];
+    }
+
+    // Check that the observation history is consistent with the model input shape
+    if (j["in_shape"].at(1) != params_.observation_history * kSingleObservationSize) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "observation_history (%d) * kSingleObservationSize (%d) != in_shape (%d)",
+                   params_.observation_history, kSingleObservationSize,
+                   static_cast<int>(j["in_shape"].at(1)));
+      return controller_interface::CallbackReturn::ERROR;
+    }
+
   } catch (const std::exception &e) {
     fprintf(stderr, "Exception thrown during init stage with message: %s \n", e.what());
     return controller_interface::CallbackReturn::ERROR;
@@ -67,9 +156,9 @@ controller_interface::CallbackReturn NeuralController::on_activate(
   }
 
   // Store the initial joint positions
-  for (int i = 0; i < ACTION_SIZE; i++) {
-    init_joint_pos_[i] =
-        state_interfaces_map_.at(params_.joint_names[i]).at("position").get().get_value();
+  for (int i = 0; i < kActionSize; i++) {
+    init_joint_pos_.at(i) =
+        state_interfaces_map_.at(params_.joint_names.at(i)).at("position").get().get_value();
   }
 
   init_time_ = get_node()->now();
@@ -79,9 +168,12 @@ controller_interface::CallbackReturn NeuralController::on_activate(
   cmd_y_vel_ = 0.0;
   cmd_yaw_vel_ = 0.0;
 
+  // Initialize the observation vector
+  observation_.resize(params_.observation_history * kSingleObservationSize, 0.0);
+
   // Set the gravity z-component in the initial observation vector
-  for (int i = 0; i < OBSERVATION_HISTORY; i++) {
-    observation_[i * SINGLE_OBSERVATION_SIZE + 5] = -1.0;
+  for (int i = 0; i < params_.observation_history; i++) {
+    observation_.at(i * kSingleObservationSize + kGravityZIndx) = -1.0;
   }
 
   // Initialize the command subscriber
@@ -113,24 +205,24 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
   // When started, return to the default joint positions
   double time_since_init = (time - init_time_).seconds();
   if (time_since_init < params_.init_duration) {
-    for (int i = 0; i < ACTION_SIZE; i++) {
+    for (int i = 0; i < kActionSize; i++) {
       // Interpolate between the initial joint positions and the default joint
       // positions
       double interpolated_joint_pos =
-          init_joint_pos_[i] * (1 - time_since_init / params_.init_duration) +
-          params_.default_joint_pos[i] * (time_since_init / params_.init_duration);
-      command_interfaces_map_.at(params_.joint_names[i])
+          init_joint_pos_.at(i) * (1 - time_since_init / params_.init_duration) +
+          params_.default_joint_pos.at(i) * (time_since_init / params_.init_duration);
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("position")
           .get()
           .set_value(interpolated_joint_pos);
-      command_interfaces_map_.at(params_.joint_names[i])
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("kp")
           .get()
-          .set_value(params_.init_kps[i]);
-      command_interfaces_map_.at(params_.joint_names[i])
+          .set_value(params_.init_kps.at(i));
+      command_interfaces_map_.at(params_.joint_names.at(i))
           .at("kd")
           .get()
-          .set_value(params_.init_kds[i]);
+          .set_value(params_.init_kds.at(i));
     }
     return controller_interface::return_type::OK;
   }
@@ -188,6 +280,26 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
     orientation_z =
         state_interfaces_map_.at(params_.imu_sensor_name).at("orientation.z").get().get_value();
 
+    // Check that the orientation is identity if we are not using the IMU. Use approximate checks
+    // to avoid floating point errors
+    if (!params_.use_imu) {
+      if (std::abs(orientation_w - 1.0) > 1e-3 || std::abs(orientation_x) > 1e-3 ||
+          std::abs(orientation_y) > 1e-3 || std::abs(orientation_z) > 1e-3) {
+        RCLCPP_ERROR(get_node()->get_logger(),
+                     "use_imu is false but IMU orientation is not identity");
+        return controller_interface::return_type::ERROR;
+      }
+    } else {
+      // Check that the orientation is not identity if we are using the IMU
+      if (std::abs(orientation_w - 1.0) < 1e-6 && std::abs(orientation_x) < 1e-6 &&
+          std::abs(orientation_y) < 1e-6 && std::abs(orientation_z) < 1e-6) {
+        RCLCPP_WARN(get_node()->get_logger(),
+                    "use_imu is true but IMU orientation is near identity");
+      }
+    }
+
+    // RCLCPP_INFO(get_node()->get_logger(), "ang_vel: %f %f %f", ang_vel_x, ang_vel_y, ang_vel_z);
+
     // Calculate the projected gravity vector
     tf2::Quaternion q(orientation_x, orientation_y, orientation_z, orientation_w);
     tf2::Matrix3x3 m(q);
@@ -203,26 +315,25 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
 
     // Fill the observation vector
     // Angular velocity
-    observation_[0] = (float)ang_vel_x * params_.ang_vel_scale;
-    observation_[1] = (float)ang_vel_y * params_.ang_vel_scale;
-    observation_[2] = (float)ang_vel_z * params_.ang_vel_scale;
+    observation_.at(0) = (float)ang_vel_x;
+    observation_.at(1) = (float)ang_vel_y;
+    observation_.at(2) = (float)ang_vel_z;
     // Projected gravity vector
-    observation_[3] = (float)projected_gravity_vector[0];
-    observation_[4] = (float)projected_gravity_vector[1];
-    observation_[5] = (float)projected_gravity_vector[2];
+    observation_.at(3) = (float)projected_gravity_vector[0];
+    observation_.at(4) = (float)projected_gravity_vector[1];
+    observation_.at(5) = (float)projected_gravity_vector[2];
     // Commands
-    observation_[6] = (float)cmd_x_vel_ * params_.lin_vel_scale;
-    observation_[7] = (float)cmd_y_vel_ * params_.lin_vel_scale;
-    observation_[8] = (float)cmd_yaw_vel_ * params_.ang_vel_scale;
+    observation_.at(6) = (float)cmd_x_vel_;
+    observation_.at(7) = (float)cmd_y_vel_;
+    observation_.at(8) = (float)cmd_yaw_vel_;
     // Joint positions
-    for (int i = 0; i < ACTION_SIZE; i++) {
+    for (int i = 0; i < kActionSize; i++) {
       // Only include the joint position in the observation if the action type
       // is position
-      if (params_.action_types[i] == "position") {
-        observation_[9 + i] =
-            (state_interfaces_map_.at(params_.joint_names[i]).at("position").get().get_value() -
-             params_.default_joint_pos[i]) *
-            params_.joint_pos_scale;
+      if (params_.action_types.at(i) == "position") {
+        float joint_pos =
+            state_interfaces_map_.at(params_.joint_names.at(i)).at("position").get().get_value();
+        observation_.at(kJointPositionIdx + i) = joint_pos - params_.default_joint_pos.at(i);
       }
     }
   } catch (const std::out_of_range &e) {
@@ -231,9 +342,9 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
   }
 
   // Clip the observation vector
-  for (int i = 0; i < OBSERVATION_SIZE; i++) {
-    observation_[i] = std::max(std::min(observation_[i], (float)params_.observation_limit),
-                               (float)-params_.observation_limit);
+  for (auto &obs : observation_) {
+    obs = std::clamp(obs, static_cast<float>(-params_.observation_limit),
+                     static_cast<float>(params_.observation_limit));
   }
 
   // Check observation for NaNs
@@ -245,39 +356,48 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
   // Perform policy inference
   model_->forward(observation_.data());
 
-  // Shift the observation history by SINGLE_OBSERVATION_SIZE for the next control step
-  for (int i = SINGLE_OBSERVATION_SIZE; i < OBSERVATION_SIZE; i++) {
-    observation_[i] = observation_[i - SINGLE_OBSERVATION_SIZE];
-  }
+  // Shift the observation history to the right by kSingleObservationSize for the next control step
+  // https://en.cppreference.com/w/cpp/algorithm/rotate
+  std::rotate(observation_.rbegin(), observation_.rbegin() + kSingleObservationSize,
+              observation_.rend());
 
   // Process the actions
   const float *policy_output = model_->getOutputs();
-  for (int i = 0; i < ACTION_SIZE; i++) {
-    // Clip the action
-    float action_clipped = std::max(std::min(policy_output[i], (float)params_.action_limit),
-                                    (float)-params_.action_limit);
+  for (int i = 0; i < kActionSize; i++) {
+    float action = policy_output[i];
+    float action_scale = params_.action_scales.at(i);
+    float default_joint_pos = params_.default_joint_pos.at(i);
+    float lower_limit = params_.joint_lower_limits.at(i);
+    float upper_limit = params_.joint_upper_limits.at(i);
+
     // Copy policy_output to the observation vector
-    observation_[9 + ACTION_SIZE + i] = fade_in_multiplier * action_clipped;
+    observation_.at(kLastActionIdx + i) = fade_in_multiplier * action;
     // Scale and de-normalize to get the action vector
-    if (params_.action_types[i] == "position") {
-      action_[i] = fade_in_multiplier * action_clipped * params_.action_scales[i] +
-                   params_.default_joint_pos[i];
+    if (params_.action_types.at(i) == "position") {
+      float unclipped = fade_in_multiplier * action * action_scale + default_joint_pos;
+      action_.at(i) = std::clamp(unclipped, lower_limit, upper_limit);
     } else {
-      action_[i] = fade_in_multiplier * action_clipped * params_.action_scales[i];
+      action_.at(i) = fade_in_multiplier * action * action_scale;
     }
 
-    if (std::isnan(action_[i])) {
+    if (std::isnan(action_.at(i))) {
       RCLCPP_ERROR(get_node()->get_logger(), "action_[%d] is NaN", i);
       return controller_interface::return_type::ERROR;
     }
 
     // Send the action to the hardware interface
-    command_interfaces_map_.at(params_.joint_names[i])
-        .at(params_.action_types[i])
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at(params_.action_types.at(i))
         .get()
-        .set_value((double)action_[i]);
-    command_interfaces_map_.at(params_.joint_names[i]).at("kp").get().set_value(params_.kps[i]);
-    command_interfaces_map_.at(params_.joint_names[i]).at("kd").get().set_value(params_.kds[i]);
+        .set_value((double)action_.at(i));
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at("kp")
+        .get()
+        .set_value(params_.kps.at(i));
+    command_interfaces_map_.at(params_.joint_names.at(i))
+        .at("kd")
+        .get()
+        .set_value(params_.kds.at(i));
   }
 
   // Get the policy inference time

@@ -1,7 +1,4 @@
-
 from launch import LaunchDescription
-from launch.actions import RegisterEventHandler
-from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
 from launch_ros.parameter_descriptions import ParameterFile
 from launch_ros.actions import Node
@@ -32,12 +29,15 @@ def generate_launch_description():
         parameters=[robot_description],
     )
 
-    robot_controllers = ParameterFile(PathJoinSubstitution(
-        [
-            FindPackageShare("neural_controller"),
-            "launch",
-            "config.yaml",
-        ]), allow_substs=True
+    robot_controllers = ParameterFile(
+        PathJoinSubstitution(
+            [
+                FindPackageShare("neural_controller"),
+                "launch",
+                "config.yaml",
+            ]
+        ),
+        allow_substs=True,
     )
 
     joy_node = Node(
@@ -59,18 +59,31 @@ def generate_launch_description():
         executable="ros2_control_node",
         parameters=[robot_controllers],
         output="both",
+        # prefix="xterm -e gdb -ex run --args",
     )
 
     robot_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["neural_controller", "--controller-manager", "/controller_manager", "--controller-manager-timeout", "30"],
+        arguments=[
+            "neural_controller",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+        ],
     )
 
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager", "--controller-manager-timeout", "30"],
+        arguments=[
+            "joint_state_broadcaster",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+        ],
     )
 
     imu_sensor_broadcaster_spawner = Node(
@@ -92,7 +105,7 @@ def generate_launch_description():
         robot_controller_spawner,
         joint_state_broadcaster_spawner,
         joy_node,
-        teleop_twist_joy_node
+        teleop_twist_joy_node,
     ]
 
     return LaunchDescription(nodes)
