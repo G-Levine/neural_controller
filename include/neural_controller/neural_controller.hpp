@@ -10,12 +10,13 @@
 
 #include "controller_interface/controller_interface.hpp"
 #include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/pose.hpp"
 #include "rclcpp/subscription.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_buffer.h"
 #include "realtime_tools/realtime_publisher.h"
-#include "sensor_msgs/msg/joy.hpp"
+#include "std_msgs/msg/empty.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
 #include "tf2/LinearMath/Matrix3x3.h"
 #include "tf2/LinearMath/Quaternion.h"
@@ -29,9 +30,6 @@ bool contains_nan(const T &container) {
   return std::any_of(container.begin(), container.end(),
                      [](double val) { return std::isnan(val); });
 }
-
-using CmdType = geometry_msgs::msg::Twist;
-using Joy = sensor_msgs::msg::Joy;
 
 class NeuralController : public controller_interface::ControllerInterface {
  public:
@@ -62,11 +60,6 @@ class NeuralController : public controller_interface::ControllerInterface {
 
  protected:
   bool check_param_vector_size();
-
-  // Determine if the emergency stop is active based on the joystick message
-  static constexpr int kNumButtonsWireless = 11;
-  static constexpr int kNumButtonsWired = 13;
-  bool determine_estop_status(bool current_estop_active, const Joy &joy_msg, const Params &params_);
 
   /* ----------------- Layer sizes ----------------- */
   // TODO: Could make observation a struct with named fields
@@ -115,12 +108,15 @@ class NeuralController : public controller_interface::ControllerInterface {
            std::map<std::string, std::reference_wrapper<hardware_interface::LoanedStateInterface>>>
       state_interfaces_map_;
 
-  // Realtime buffers for command and joy subscriptions
-  realtime_tools::RealtimeBuffer<std::shared_ptr<CmdType>> rt_command_ptr_;
-  rclcpp::Subscription<CmdType>::SharedPtr cmd_subscriber_ = nullptr;
+  // Realtime buffers for command and emergency stop subscriptions
+  realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Twist>> rt_cmd_vel_ptr_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscriber_ = nullptr;
 
-  realtime_tools::RealtimeBuffer<std::shared_ptr<Joy>> rt_joy_command_ptr_;
-  rclcpp::Subscription<Joy>::SharedPtr joy_subscriber_ = nullptr;
+  realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Pose>> rt_cmd_pose_ptr_;
+  rclcpp::Subscription<geometry_msgs::msg::Pose>::SharedPtr cmd_pose_subscriber_ = nullptr;
+
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr emergency_stop_subscriber_ = nullptr;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr emergency_stop_reset_subscriber_ = nullptr;
 
   // Alias message types for future improvements
   using ActionMsg = std_msgs::msg::Float32MultiArray;
