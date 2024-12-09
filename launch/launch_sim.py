@@ -98,6 +98,12 @@ def generate_launch_description():
         ],
     )
 
+    foxglove_bridge = Node(
+        package="foxglove_bridge",
+        executable="foxglove_bridge",
+        output="both",
+    )
+
     nodes = [
         robot_state_publisher,
         # imu_sensor_broadcaster_spawner,
@@ -106,6 +112,7 @@ def generate_launch_description():
         joint_state_broadcaster_spawner,
         joy_node,
         teleop_twist_joy_node,
+        foxglove_bridge,
     ]
 
     return LaunchDescription(nodes)
