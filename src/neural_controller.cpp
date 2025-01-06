@@ -154,8 +154,10 @@ controller_interface::InterfaceConfiguration NeuralController::state_interface_c
 
 controller_interface::CallbackReturn NeuralController::on_activate(
     const rclcpp_lifecycle::State & /*previous_state*/) {
-  rt_cmd_vel_ptr_ = realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Twist>>(nullptr);
-  rt_cmd_pose_ptr_ = realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Pose>>(nullptr);
+  rt_cmd_vel_ptr_ =
+      realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Twist>>(nullptr);
+  rt_cmd_pose_ptr_ =
+      realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Pose>>(nullptr);
 
   // Populate the command interfaces map
   for (auto &command_interface : command_interfaces_) {
@@ -193,7 +195,9 @@ controller_interface::CallbackReturn NeuralController::on_activate(
   // Initialize the command subscriber
   cmd_vel_subscriber_ = get_node()->create_subscription<geometry_msgs::msg::Twist>(
       "/cmd_vel", rclcpp::SystemDefaultsQoS(),
-      [this](const geometry_msgs::msg::Twist::SharedPtr msg) { rt_cmd_vel_ptr_.writeFromNonRT(msg); });
+      [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
+        rt_cmd_vel_ptr_.writeFromNonRT(msg);
+      });
 
   cmd_pose_subscriber_ = get_node()->create_subscription<geometry_msgs::msg::Pose>(
       "/cmd_pose", rclcpp::SystemDefaultsQoS(),
@@ -245,7 +249,8 @@ controller_interface::CallbackReturn NeuralController::on_error(
 
 controller_interface::CallbackReturn NeuralController::on_deactivate(
     const rclcpp_lifecycle::State & /*previous_state*/) {
-  rt_cmd_vel_ptr_ = realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Twist>>(nullptr);
+  rt_cmd_vel_ptr_ =
+      realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Twist>>(nullptr);
   rt_cmd_pose_ptr_ =
       realtime_tools::RealtimeBuffer<std::shared_ptr<geometry_msgs::msg::Pose>>(nullptr);
   for (auto &command_interface : command_interfaces_) {
