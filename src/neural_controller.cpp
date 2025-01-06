@@ -436,8 +436,17 @@ controller_interface::return_type NeuralController::update(const rclcpp::Time &t
     rt_observation_publisher_->unlockAndPublish();
   }
 
+  // Measure the time before policy inference
+  auto start_time = std::chrono::high_resolution_clock::now();
+
   // Perform policy inference
   model_->forward(observation_.data());
+
+  // Measure the time after policy inference
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto inference_duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+  RCLCPP_INFO(get_node()->get_logger(), "Policy inference time: %ld ms", inference_duration);
 
   // Shift the observation history to the right by kSingleObservationSize for the next control
   // step https://en.cppreference.com/w/cpp/algorithm/rotate
