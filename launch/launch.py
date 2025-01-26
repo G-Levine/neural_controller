@@ -43,8 +43,8 @@ def generate_launch_description():
     )
 
     joy_node = Node(
-        package="joy",
-        executable="joy_node",
+        package="joy_linux",
+        executable="joy_linux_node",
         parameters=[robot_controllers],
         output="both",
     )
@@ -75,6 +75,19 @@ def generate_launch_description():
         ],
     )
 
+    three_leg_robot_controller_spawner = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "neural_controller_three_leg",
+            "--controller-manager",
+            "/controller_manager",
+            "--controller-manager-timeout",
+            "30",
+            "--inactive",
+        ],
+    )
+
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -99,14 +112,23 @@ def generate_launch_description():
         ],
     )
 
+    joy_util_node = Node(
+        package="joy_utils",
+        executable="estop_controller",
+        parameters=[robot_controllers],
+        output="both",
+    )
+
     nodes = [
         robot_state_publisher,
         # imu_sensor_broadcaster_spawner,
         control_node,
         robot_controller_spawner,
+        three_leg_robot_controller_spawner,
         joint_state_broadcaster_spawner,
         joy_node,
         teleop_twist_joy_node,
+        joy_util_node
     ]
 
     return LaunchDescription(nodes)
